@@ -10,7 +10,6 @@
 
 #define BUFF_SIZE 2000
 #define PORT_NUMBER 55555
-#define SERVER_IP "127.0.0.1"
 struct sockaddr_in peerAddr;
 
 int createTunDevice()
@@ -37,23 +36,30 @@ int createTunDevice()
 	return tunfd;
 }
 
-int connectToUDPServer(const char *svrip)
+int connectToTCPServer(const char *svrip)
 {
 	int sockfd;
 	char *hello = "Hello";
 
 	memset(&peerAddr, 0, sizeof(peerAddr));
 	peerAddr.sin_family = AF_INET;
-	peerAddr.sin_port = htons(PORT_NUMBER);
+	peerAddr.sin_port = htons(8080);
 	peerAddr.sin_addr.s_addr = inet_addr(svrip);
 
-	sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+	sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd == -1) {
 		printf("Create socket failed! (%d: %s)\n", errno, strerror(errno));
 		return -1;
 	}
-	// Send a hello message to "connect" with the VPN server
-	sendto(sockfd, hello, strlen(hello), 0, (struct sockaddr *) &peerAddr, sizeof(peerAddr));
+
+    // 连接到服务器
+    if (connect(sockfd, (struct sockaddr *)&peerAddr, sizeof(peerAddr)) < 0)
+    {
+        printf("\nConnection Failed \n");
+        return -1;
+    }
+	// Send a hello message to the VPN server
+	send(sockfd, hello, strlen(hello), 0);
 
 	printf("Connect to server %s: %s\n", inet_ntoa(peerAddr.sin_addr), hello);
 	return sockfd;
@@ -68,7 +74,7 @@ void tunSelected(int tunfd, int sockfd)
 
 	bzero(buff, BUFF_SIZE);
 	len = read(tunfd, buff, BUFF_SIZE);
-	sendto(sockfd, buff, len, 0, (struct sockaddr *) &peerAddr, sizeof(peerAddr));
+	send(sockfd,buff,len,0);
 }
 
 void socketSelected(int tunfd, int sockfd)
@@ -79,7 +85,7 @@ void socketSelected(int tunfd, int sockfd)
 	printf("Got a packet from the tunnel\n");
 
 	bzero(buff, BUFF_SIZE);
-	len = recvfrom(sockfd, buff, BUFF_SIZE, 0, NULL, NULL);
+	len = recv(sockfd,buff,BUFF_SIZE,0);
 	write(tunfd, buff, len);
 
 }
@@ -88,10 +94,8 @@ int main(int argc, char *argv[])
 {
 	int tunfd, sockfd;
 
-	daemon(1, 1);
-
 	tunfd = createTunDevice();
-	sockfd = connectToUDPServer(argv[1]);
+	sockfd = connectToTCPServer(argv[1]);
 
 	// Enter the main loop
 	while (1) {
