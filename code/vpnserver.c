@@ -12,6 +12,8 @@
 #include <netdb.h>
 #include <shadow.h>
 #include <crypt.h>
+#include <sys/msg.h>
+#include <pthread.h>
 #include "tlsserver.h"
 
 #define CHK_SSL(err)                 \
@@ -21,8 +23,6 @@
 		exit(2);                     \
 	}
 #define BUFF_SIZE 2000
-
-struct sockaddr_in peerAddr;
 
 int createTunDevice()
 {
@@ -47,14 +47,18 @@ int createTunDevice()
 	}
 
 	printf("Setup TUN interface success!\n");
+	if ((system("ifconfig tun0 192.168.53.1/24 up")) != 0)
+	{
+		printf("system call failed\n");
+		exit(1);
+	}
 	return tunfd;
 }
 
 int initTCPServer()
 {
-	int sockfd, tcp_sockfd;
+	int sockfd;
 	struct sockaddr_in server;
-	char buff[100];
 
 	memset(&server, 0, sizeof(server));
 	server.sin_family = AF_INET;
@@ -79,17 +83,7 @@ int initTCPServer()
 		perror("listen");
 		return -1;
 	}
-	// Wait for the VPN client to "connect".
-	int peerAddrLen = sizeof(struct sockaddr_in);
-	if ((tcp_sockfd = accept(sockfd, (struct sockaddr *)&peerAddr, (socklen_t *)&peerAddrLen)) < 0)
-	{
-		perror("accept");
-		return -1;
-	}
-	bzero(buff, 100);
-	ssize_t len = recv(tcp_sockfd, buff, 100, 0);
-	printf("Accept connect from client %s: %s\n", inet_ntoa(peerAddr.sin_addr), buff);
-	return tcp_sockfd;
+	return sockfd; //return listen sockfd
 }
 
 void tunSelected(int tunfd, SSL *ssl)
@@ -109,55 +103,25 @@ void socketSelected(int tunfd, SSL *ssl)
 	int len;
 	char buff[BUFF_SIZE];
 
-	printf("Got a packet from the tunnel\n");
-
 	bzero(buff, BUFF_SIZE);
 	len = SSL_read(ssl, buff, BUFF_SIZE);
-	if (len == 0)
+	if (len <= 0)
 	{
 		printf("ssl down\n");
 		exit(0);
 	}
+	printf("Got a packet from the tunnel\n");
 	write(tunfd, buff, len);
 }
 
-int main(int argc, char *argv[])
+int authenticate(SSL *ssl)
 {
-	int tunfd, sockfd, sslfd;
-
-	if ((tunfd = createTunDevice()) < 0)
-	{
-		printf("error_createTunDevice\n");
-		exit(1);
-	}
-	if ((sockfd = initTCPServer()) < 0)
-	{
-		printf("error_initTCPServer\n");
-		exit(1);
-	}
-
-	if ((system("ifconfig tun0 192.168.53.1/24 up")) != 0)
-	{
-		printf("system call failed\n");
-		exit(1);
-	}
-	/*******************************************************************/
-	//TCP -> TLS
-	SSL *ssl = setupTLSServer();
-	SSL_set_fd(ssl, sockfd);
-	int err = SSL_accept(ssl);
-	fprintf(stderr, "SSL_accept return %d\n", err); //gai
-	CHK_SSL(err);
-	sslfd = SSL_get_fd(ssl);
-	/*******************************************************************/
-	//authenticate
 	char *message_1 = "miniVPN: input username";
 	char *message_2 = "input passwd";
-	char *message_3 = "login successful!";
-	char *message_4 = "passwd incorrect;connect shutdown";
+	char *message_3 = "passwd incorrect;connect shutdown";
 	char recv[BUFF_SIZE];
-	char user[10];
-	char passwd[10];
+	char user[10] = {0};
+	char passwd[10] = {0};
 	bzero(recv, BUFF_SIZE);
 	int len;
 	SSL_write(ssl, message_1, strlen(message_1));
@@ -173,32 +137,119 @@ int main(int argc, char *argv[])
 	pw = getspnam(user);
 	if (pw == NULL)
 	{
-		printf("get_error\n");
-		//return -1;
+		printf("getpw_error\n");
+		exit(1);
 	}
 	epasswd = crypt(passwd, pw->sp_pwdp);
 	if (strcmp(epasswd, pw->sp_pwdp))
 	{
-		SSL_write(ssl, message_4, strlen(message_4));
-		printf("incorrect password\n");
-		//return -1;
+		SSL_write(ssl, message_3, strlen(message_3));
+		return -1;
 	}
-	SSL_write(ssl, message_3, strlen(message_3));
 	printf("authenticate_ok\n");
-	/*******************************************************************/
-	// Enter the main loop
-	while (1)
+	return 0;
+}
+
+int IPpool[200]; //procsee_id=IPpool[i],IP=192.168.53.i+5
+struct msgbuf1
+{
+	long mtype; // 消息类型.....type=1 request.........type=2 return ip
+	int optype; //new=1,free=0			ip(>5)
+	int id;		//new-pid,free=lip		ip(>5)
+};
+#include "lib.h"
+int main(int argc, char *argv[])
+{
+	int tunfd, listen_sock;
+
+	if ((tunfd = createTunDevice()) < 0)
 	{
-		fd_set readFDSet;
+		printf("error_createTunDevice\n");
+		exit(1);
+	}
+	if ((listen_sock = initTCPServer()) < 0)
+	{
+		printf("error_initTCPServer\n");
+		exit(1);
+	}
+	/**********************************************************************/
+	int msgid = creat_msg();
+	pthread_t tid;
+	pthread_create(&tid, NULL, setIPpool, &msgid);
+	pthread_t tid2;
+	pthread_create(&tid2, NULL, readTUN, &msgid);
+	//pthread_join(tid, NULL);
+	//pthread_join(tid2, NULL);
+	/**********************************************************************/
+	SSL_CTX *ctx = setupTLSServer();
+	while (1) //parent loop
+	{
+		// TCP accept
+		struct sockaddr_in peerAddr;
+		int peerAddrLen = sizeof(struct sockaddr_in);
+		int sockfd;
+		if ((sockfd = accept(listen_sock, (struct sockaddr *)&peerAddr, (socklen_t *)&peerAddrLen)) < 0)
+		{
+			perror("accept");
+			return -1;
+		}
+		if (fork() == 0) // The child process
+		{
+			close(listen_sock);
 
-		FD_ZERO(&readFDSet);
-		FD_SET(sslfd, &readFDSet);
-		FD_SET(tunfd, &readFDSet);
-		select(FD_SETSIZE, &readFDSet, NULL, NULL, NULL);
+			SSL *ssl;
+			ssl = SSL_new(ctx);
+			if (ssl == NULL)
+			{
+				printf("SSL_new failed\n");
+				return 1;
+			}
+			if ((SSL_set_fd(ssl, sockfd)) != 1)
+			{
+				printf("SSL_set_fd failed\n");
+				return 1;
+			}
+			if ((SSL_accept(ssl)) != 1)
+			{
+				printf("SSL_accept failed\n");
+				return 1;
+			}
 
-		if (FD_ISSET(tunfd, &readFDSet))
-			tunSelected(tunfd, ssl);
-		if (FD_ISSET(sslfd, &readFDSet))
-			socketSelected(tunfd, ssl);
+			if ((authenticate(ssl)) < 0)
+			{
+				printf("password incorrect;child process exit\n");
+				SSL_shutdown(ssl);
+				SSL_free(ssl);
+				close(sockfd);
+			}
+			else
+			{
+				struct msgbuf1 new_msg;
+				new_msg.mtype = 1;
+				new_msg.optype = 1;
+				new_msg.id = getpid();
+				if (msgsnd(msgid, &new_msg, 8, 0) == -1)
+				{
+					perror("fmsgsnd");
+					exit(EXIT_FAILURE);
+				}
+				if (msgrcv(msgid, &new_msg, 8, 2, 0) == -1)
+				{
+					perror("fmsgrcv");
+					exit(1);
+				}
+				int lip = new_msg.id;
+				char *message_s = "login successful!your lip:";
+				SSL_write(ssl, message_s, strlen(message_s));
+				SSL_write(ssl, &lip, 4);
+			}
+			
+			while (1)
+				socketSelected(tunfd, ssl);
+		}
+		else // The parent process
+		{
+			close(sockfd);
+		}
 	}
 }

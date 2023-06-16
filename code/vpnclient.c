@@ -53,7 +53,6 @@ int createTunDevice()
 int connectToTCPServer(const char *hostname, int port)
 {
 	int sockfd;
-	char *hello = "Hello";
 
 	struct addrinfo hints, *result;
 	hints.ai_family = AF_INET;
@@ -86,10 +85,7 @@ int connectToTCPServer(const char *hostname, int port)
 		printf("\nConnection Failed \n");
 		return -1;
 	}
-	// Send a hello message to the VPN server
-	send(sockfd, hello, strlen(hello), 0);
-
-	printf("Connect to server %s: %s\n", inet_ntoa(peerAddr.sin_addr), hello);
+	printf("Connect to server %s: success\n", inet_ntoa(peerAddr.sin_addr));
 	return sockfd;
 }
 
@@ -134,17 +130,6 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	if ((system("ifconfig tun0 192.168.53.5/24 up")) != 0)
-	{
-		printf("system call failed\n");
-		exit(1);
-	}
-	if ((system("route add -net 192.168.60.0/24 tun0")) != 0)
-	{
-		printf("system call failed\n");
-		exit(1);
-	}
-
 	SSL *ssl = setupTLSClient(hostname);
 	SSL_set_fd(ssl, sockfd);
 	CHK_NULL(ssl);
@@ -178,7 +163,23 @@ int main(int argc, char *argv[])
 	len = SSL_read(ssl, recv, BUFF_SIZE);
 	printf("%s\n", recv);
 
+	int lip = 0;
+	len = SSL_read(ssl, &lip, 4);
+	printf("%d\n", lip);
 	printf("authenticate_ok\n");
+
+	char command[50];
+	sprintf(command, "ifconfig tun0 192.168.53.%d/24 up", lip+10);
+	if ((system(command)) != 0)
+	{
+		printf("system call failed\n");
+		exit(1);
+	}
+	if ((system("route add -net 192.168.60.0/24 tun0")) != 0)
+	{
+		printf("system call failed\n");
+		exit(1);
+	}
 	/*******************************************************************/
 	// Enter the main loop
 	while (1)

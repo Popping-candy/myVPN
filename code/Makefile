@@ -20,7 +20,7 @@ tlsclient.o: tlsclient.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 server: vpnserver.o tlsserver.o
-	$(CC) $(CFLAGS) $^ -o $(BIN_DIR)/$@ -lssl -lcrypto -lcrypt
+	$(CC) $(CFLAGS) $^ -o $(BIN_DIR)/$@ -lssl -lcrypto -lcrypt -lpthread
 	rm -f vpnserver.o tlsserver.o
 
 client: vpnclient.o tlsclient.o

@@ -1,6 +1,6 @@
 #ifndef _TLSSERVER_H
 #define _TLSSERVER_H
 
-SSL *setupTLSServer();
+SSL_CTX *setupTLSServer();
 
 #endif /* _TLSSERVER_H */

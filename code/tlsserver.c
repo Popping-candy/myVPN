@@ -14,11 +14,11 @@
 #define KEYF HOME "server.key"
 #define CACERT HOME "ca.crt"
 
-SSL *setupTLSServer()
+SSL_CTX *setupTLSServer()
 {
 	SSL_METHOD *meth;
 	SSL_CTX *ctx;
-	SSL *ssl;
+	//SSL *ssl;
 
 	// Step 0: OpenSSL library initialization
 	// This step is no longer needed as of version 1.1.0.
@@ -50,8 +50,8 @@ SSL *setupTLSServer()
 		fprintf(stderr, "Private key does not match the certificate public key\n");
 		exit(5);
 	}
-	// Step 3: Create a new SSL structure for a connection
-	ssl = SSL_new(ctx);
+	// Step 3: Create a new SSL structure for a connection;move to chlid process
+	//ssl = SSL_new(ctx);
 
-	return ssl;
+	return ctx;
 }
