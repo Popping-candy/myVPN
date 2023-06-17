@@ -165,21 +165,21 @@ int main(int argc, char *argv[])
 
 	int lip = 0;
 	len = SSL_read(ssl, &lip, 4);
-	printf("%d\n", lip);
-	printf("authenticate_ok\n");
-
+	printf("192.168.53.%d\n", lip);
 	char command[50];
-	sprintf(command, "ifconfig tun0 192.168.53.%d/24 up", lip+10);
+	sprintf(command, "ifconfig tun0 192.168.53.%d/30 up", lip);
 	if ((system(command)) != 0)
 	{
 		printf("system call failed\n");
 		exit(1);
 	}
+	printf("%s:success\n",command);
 	if ((system("route add -net 192.168.60.0/24 tun0")) != 0)
 	{
 		printf("system call failed\n");
 		exit(1);
 	}
+	printf("route add -net 192.168.60.0/24 tun0:success\n");
 	/*******************************************************************/
 	// Enter the main loop
 	while (1)

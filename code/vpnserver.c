@@ -13,7 +13,6 @@
 #include <shadow.h>
 #include <crypt.h>
 #include <sys/msg.h>
-#include <pthread.h>
 #include "tlsserver.h"
 
 #define CHK_SSL(err)                 \
@@ -44,13 +43,6 @@ int createTunDevice()
 	{
 		printf("Setup TUN interface by ioctl failed! (%d: %s)\n", errno, strerror(errno));
 		return -1;
-	}
-
-	printf("Setup TUN interface success!\n");
-	if ((system("ifconfig tun0 192.168.53.1/24 up")) != 0)
-	{
-		printf("system call failed\n");
-		exit(1);
 	}
 	return tunfd;
 }
@@ -149,41 +141,25 @@ int authenticate(SSL *ssl)
 	printf("authenticate_ok\n");
 	return 0;
 }
-
-int IPpool[200]; //procsee_id=IPpool[i],IP=192.168.53.i+5
-struct msgbuf1
-{
-	long mtype; // 消息类型.....type=1 request.........type=2 return ip
-	int optype; //new=1,free=0			ip(>5)
-	int id;		//new-pid,free=lip		ip(>5)
-};
-#include "lib.h"
 int main(int argc, char *argv[])
 {
-	int tunfd, listen_sock;
+	int listen_sock;
 
-	if ((tunfd = createTunDevice()) < 0)
-	{
-		printf("error_createTunDevice\n");
-		exit(1);
-	}
 	if ((listen_sock = initTCPServer()) < 0)
 	{
 		printf("error_initTCPServer\n");
 		exit(1);
 	}
-	/**********************************************************************/
-	int msgid = creat_msg();
-	pthread_t tid;
-	pthread_create(&tid, NULL, setIPpool, &msgid);
-	pthread_t tid2;
-	pthread_create(&tid2, NULL, readTUN, &msgid);
-	//pthread_join(tid, NULL);
-	//pthread_join(tid2, NULL);
-	/**********************************************************************/
 	SSL_CTX *ctx = setupTLSServer();
+	int IPpool[100] = {0};
+	int lnet = 0;
 	while (1) //parent loop
 	{
+		if ((lnet >= 100) || (IPpool[lnet] != 0))
+		{
+			printf("full\n");
+			exit(1);
+		}
 		// TCP accept
 		struct sockaddr_in peerAddr;
 		int peerAddrLen = sizeof(struct sockaddr_in);
@@ -193,10 +169,10 @@ int main(int argc, char *argv[])
 			perror("accept");
 			return -1;
 		}
-		if (fork() == 0) // The child process
+		if ((IPpool[lnet] = fork()) == 0) // The child process
 		{
 			close(listen_sock);
-
+			int tunfd;
 			SSL *ssl;
 			ssl = SSL_new(ctx);
 			if (ssl == NULL)
@@ -224,31 +200,48 @@ int main(int argc, char *argv[])
 			}
 			else
 			{
-				struct msgbuf1 new_msg;
-				new_msg.mtype = 1;
-				new_msg.optype = 1;
-				new_msg.id = getpid();
-				if (msgsnd(msgid, &new_msg, 8, 0) == -1)
+				char *message_s = "login successful!your ip:";
+				SSL_write(ssl, message_s, strlen(message_s));
+				int s_ip = lnet * 4 + 1;
+				int c_ip = lnet * 4 + 2;
+				SSL_write(ssl, &c_ip, 4);
+
+				if ((tunfd = createTunDevice()) < 0)
 				{
-					perror("fmsgsnd");
-					exit(EXIT_FAILURE);
-				}
-				if (msgrcv(msgid, &new_msg, 8, 2, 0) == -1)
-				{
-					perror("fmsgrcv");
+					printf("error_createTunDevice\n");
 					exit(1);
 				}
-				int lip = new_msg.id;
-				char *message_s = "login successful!your lip:";
-				SSL_write(ssl, message_s, strlen(message_s));
-				SSL_write(ssl, &lip, 4);
+				printf("Setup TUN%d interface success!\n", lnet + 1);
+				char command[50];
+				//what command??
+				sprintf(command, "ifconfig tun%d 192.168.53.%d/30 up", lnet, s_ip);
+
+				if ((system(command)) != 0)
+				{
+					printf("system call failed\n");
+					exit(1);
+				}
+				printf("%s:success\n", command);
 			}
-			
+			int sslfd = SSL_get_fd(ssl);
 			while (1)
-				socketSelected(tunfd, ssl);
+			{
+				fd_set readFDSet;
+
+				FD_ZERO(&readFDSet);
+				FD_SET(sslfd, &readFDSet);
+				FD_SET(tunfd, &readFDSet);
+				select(FD_SETSIZE, &readFDSet, NULL, NULL, NULL);
+
+				if (FD_ISSET(tunfd, &readFDSet))
+					tunSelected(tunfd, ssl);
+				if (FD_ISSET(sslfd, &readFDSet))
+					socketSelected(tunfd, ssl);
+			}
 		}
 		else // The parent process
 		{
+			lnet++;
 			close(sockfd);
 		}
 	}
