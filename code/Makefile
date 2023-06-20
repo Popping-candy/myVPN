@@ -13,19 +13,16 @@ vpnserver.o: vpnserver.c
 vpnclient.o: vpnclient.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-tlsserver.o: tlsserver.c
+lib.o: lib.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-tlsclient.o: tlsclient.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-server: vpnserver.o tlsserver.o
+server: vpnserver.o lib.o
 	$(CC) $(CFLAGS) $^ -o $(BIN_DIR)/$@ -lssl -lcrypto -lcrypt
-	rm -f vpnserver.o tlsserver.o
+	rm -f vpnserver.o lib.o
 
-client: vpnclient.o tlsclient.o
-	$(CC) $(CFLAGS) $^ -o $(BIN_DIR)/$@ -lssl -lcrypto
-	rm -f vpnclient.o tlsclient.o
+client: vpnclient.o
+	$(CC) $(CFLAGS) $< -o $(BIN_DIR)/$@ -lssl -lcrypto
+	rm -f vpnclient.o
 
 clean:
 	rm -f $(BIN_DIR)/server $(BIN_DIR)/client
