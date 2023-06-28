@@ -224,26 +224,32 @@ int main(int argc, char *argv[])
 	bzero(recv, BUFF_SIZE);
 	char user[10];
 	char passwd[10];
+	int len;
 
-	SSL_read(ssl, recv, BUFF_SIZE);
+	len = SSL_read(ssl, recv, BUFF_SIZE);
 	printf("%s\n", recv);
 	bzero(recv, BUFF_SIZE);
 
 	scanf("%s", user);
 	SSL_write(ssl, user, strlen(user));
 
-	SSL_read(ssl, recv, BUFF_SIZE);
+	len = SSL_read(ssl, recv, BUFF_SIZE);
 	printf("%s\n", recv);
 	bzero(recv, BUFF_SIZE);
 
 	scanf("%s", passwd);
 	SSL_write(ssl, passwd, strlen(passwd));
 
-	SSL_read(ssl, recv, BUFF_SIZE);
+	len = SSL_read(ssl, recv, BUFF_SIZE);
 	printf("%s\n", recv);
 
 	int lip = 0;
-	SSL_read(ssl, &lip, 4);
+	len = SSL_read(ssl, &lip, 4);
+	if (len <= 0)
+	{
+		printf("ssl down\n");
+		exit(0);
+	}
 	printf("192.168.53.%d\n", lip);
 	char command[50];
 	sprintf(command, "ifconfig tun0 192.168.53.%d/30 up", lip);
